@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⚡️ АВТОНОМНИЙ JSON Редактор з Картою (KharkivAlerts)</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 20px;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        .controls, .map-section, .output {
+            background: #34495e;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            height: fit-content;
+        }
+        .controls { flex: 1; min-width: 300px; max-width: 400px; }
+        .map-section { flex: 2; min-width: 450px; }
+        .output { flex-basis: 100%; margin-top: 20px; }
+        h1 { color: #f39c12; margin-bottom: 20px; }
+        h2 { color: #3498db; margin-top: 0; margin-bottom: 15px; border-bottom: 1px solid #3498db; padding-bottom: 5px; }
+        label { display: block; margin-top: 15px; margin-bottom: 5px; font-weight: bold; }
+        input[type="text"], textarea, select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #2c3e50;
+            border-radius: 4px;
+            background: #2c3e50;
+            color: #ecf0f1;
+            box-sizing: border-box;
+            font-size: 1em;
+        }
+        textarea#outputJson { 
+            height: 250px; 
+            resize: vertical; 
+            font-family: monospace;
+        }
+        .btn-group { margin-top: 25px; display: flex; gap: 10px; }
+        .btn {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: bold;
+            transition: background 0.3s;
+        }
+        .btn-add { background: #e74c3c; color: white; flex-grow: 1; }
+        .btn-add:hover { background: #c0392b; }
+        .btn-save { background: #2ecc71; color: white; flex-grow: 1; }
+        .btn-save:hover { background: #27ae60; }
+        .btn-load { background: #3498db; color: white; }
+        .btn-load:hover { background: #2980b9; }
+        .success-message { color: #2ecc71; font-weight: bold; margin-top: 10px; }
+
+        #map { height: 600px; border-radius: 8px; }
+        #activeAlertsList { max-height: 200px; overflow-y: auto; background: #2c3e50; padding: 10px; border-radius: 4px; margin-top: 10px; }
+        .marker-popup { color: #000; }
+        .alert-item-line { background: #2c3e50; padding: 5px; border-radius: 4px; margin-bottom: 5px; border-left: 5px solid; }
+        .alert-item-line button { background: none; border: none; color: white; cursor: pointer; float: right; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div class="controls">
+        <h1>🚨 Створення нової загрози</h1>
+        
+        <label for="inputType">Тип загрози:</label>
+        <select id="inputType">
+            <option value="s300">🔴 С-300 / С-400 (Балістика)</option>
+            <option value="shahed">🛸 Дрон Shahed</option>
+            <option value="kab">💣 КАБ / УМПБ</option>
+            <option value="iskander">💥 Іскандер-М</option>
+            <option value="fpv">🛰️ FPV-дрон / Розвідка</option>
+            <option value="artillery">🔥 Артилерія / РСЗВ</option>
+            <option value="alert">⚠️ Загальна тривога</option>
+        </select>
+        
+        <label for="inputLocation">Локація:</label>
+        <input type="text" id="inputLocation" value="Харків" required>
+        
+        <label for="inputCoords">Координати (lat, lon) <span style="color:#2ecc71;">(Клікніть на карті!)</span>:</label>
+        <input type="text" id="inputCoords" value="49.9935, 36.2304" required>
+        
+        <label for="inputMessage">Повідомлення:</label>
+        <textarea id="inputMessage" rows="2" required>Висока загроза. Залишайтесь в укритті!</textarea>
+        
+        <label for="inputDirection">Маршрут Shahed (Приклад: [50.11, 36.12], [50.05, 36.15]...)</label>
+        <textarea id="inputDirection" rows="2" placeholder="Додайте масив координат для лінії маршруту (тільки для Shahed)"></textarea>
+
+        <div class="btn-group">
+            <button class="btn btn-add" onclick="generateNewAlert()">➕ Додати загрозу в список</button>
+            <button class="btn btn-add" style="background: #e67e22;" onclick="clearAlerts()">🗑️ Очистити список</button>
+        </div>
+        
+        <div style="margin-top: 20px;">
+            <h2>🛠️ Активні загрози:</h2>
+            <div id="activeAlertsList">Поки що немає загроз.</div>
+        </div>
+    </div>
+
+    <div class="map-section">
+        <h2>🗺️ Карта для вибору координат</h2>
+        <div id="map"></div>
+    </div>
+
+    <div class="output">
+        <h1>💾 Автономне збереження JSON</h1>
+        <p>
+            **1. Вставте** ваш поточний JSON (якщо потрібно завантажити старі дані).<br>
+            **2. Змініть** список загроз.<br>
+            **3. Натисніть "Автономно зберегти"** для оновлення файлу <code>alerts.json</code> на вашому сервері Node.js.
+        </p>
+        
+        <textarea id="outputJson"></textarea>
+        
+        <div class="btn-group">
+            <button class="btn btn-load" onclick="loadJson()">⬆️ Завантажити JSON у Редактор</button>
+            <button class="btn btn-save" onclick="saveJsonRemotely()">💾 Автономно зберегти</button>
+        </div>
+        <div id="copySuccess" class="success-message" style="display: none;"></div>
+    </div>
+
+    <script>
+        let activeAlerts = []; 
+        let map;
+        let markersLayer = new L.LayerGroup();
+        let directionLinesLayer = new L.LayerGroup();
+        let currentMarker = null; 
+        
+        // --- КОНФИГУРАЦИЯ СЕРВЕРА ---
+        // !!! ЭТО ДОЛЖНО СОВПАДАТЬ С АДРЕСОМ ВАШЕГО ЗАПУЩЕННОГО NODE.JS СЕРВЕРА !!!
+        const SERVER_URL = 'http://localhost:3000/api/save-alerts'; 
+
+        // --- ИНИЦИАЛИЗАЦИЯ КАРТЫ ---
+        function initMap() {
+            if (map) return;
+            
+            const initialCoords = [49.9935, 36.2304]; // Центр Харькова
+            
+            map = L.map('map').setView(initialCoords, 11);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors',
+                maxZoom: 18,
+            }).addTo(map);
+
+            markersLayer.addTo(map);
+            directionLinesLayer.addTo(map);
+            
+            // Событие клика по карте для ввода координат
+            map.on('click', function(e) {
+                const lat = e.latlng.lat.toFixed(5);
+                const lon = e.latlng.lng.toFixed(5);
+                document.getElementById('inputCoords').value = `${lat}, ${lon}`;
+                
+                // Добавляем временный маркер
+                if (currentMarker) {
+                    map.removeLayer(currentMarker);
+                }
+                currentMarker = L.marker(e.latlng).addTo(map);
+            });
+        }
+
+        // --- ГЛАВНЫЕ ФУНКЦИИ ---
+
+        function updateMapDisplay() {
+            markersLayer.clearLayers();
+            directionLinesLayer.clearLayers();
+            activeAlerts.forEach(alert => {
+                const coords = alert.coords;
+                const type = alert.type;
+                
+                const iconHtml = `<div style="background-color: ${getAlertColor(type)}; width: 15px; height: 15px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 5px ${getAlertColor(type)};"></div>`;
+                const customIcon = L.divIcon({
+                    html: iconHtml,
+                    className: 'custom-div-icon',
+                    iconSize: [15, 15],
+                    iconAnchor: [7, 7]
+                });
+
+                const marker = L.marker(coords, { icon: customIcon });
+                marker.bindPopup(`
+                    <div class="marker-popup">
+                        <strong>${getTypeName(type)}</strong><br>
+                        ${alert.location.replace(/_/g, ' ')}
+                    </div>
+                `).openPopup();
+                markersLayer.addLayer(marker);
+                
+                if (type === 'shahed' && alert.direction_line && Array.isArray(alert.direction_line)) {
+                    const line = L.polyline(alert.direction_line, {
+                        color: getAlertColor(type),
+                        weight: 3,
+                        dashArray: '10, 5'
+                    });
+                    directionLinesLayer.addLayer(line);
+                }
+            });
+        }
+
+        function updateOutput() {
+            const now = new Date();
+            const lastUpdate = now.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            
+            // Сортировка по времени (самые новые сверху)
+            activeAlerts.sort((a, b) => b.timestamp - a.timestamp);
+
+            const alertsArrayString = activeAlerts.map(alert => JSON.stringify(alert, null, 4)).join(',\n    ');
+
+            const fullJson = `{
+  "last_update": "${lastUpdate} (EET) / ${now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })} (GMT)",
+  "active_alerts": [
+    ${alertsArrayString}
+  ]
+}`;
+            document.getElementById('outputJson').value = fullJson;
+            
+            updateAdminList();
+            updateMapDisplay();
+        }
+        
+        function getTypeName(type) {
+            const names = {
+                s300: '🚀 С-300 / Балістика', iskander: '💥 Іскандер-М', kab: '💣 КАБ / УМПБ', shahed: '🛸 Дрон Shahed',
+                fpv: '🛰️ FPV-дрон / Розвідка', artillery: '🔥 Артилерія / РСЗВ', alert: '⚠️ Загальна тривога'
+            };
+            return names[type] || type;
+        }
+
+        function getAlertColor(type) {
+            const colors = {
+                s300: '#e74c3c', iskander: '#f39c12', kab: '#9b59b6', shahed: '#3498db',
+                fpv: '#1abc9c', artillery: '#e67e22', alert: '#f1c40f'
+            };
+            return colors[type] || '#ccc';
+        }
+        
+        // --- ФУНКЦИИ АДМИН ПАНЕЛИ ---
+
+        function generateNewAlert() {
+            const type = document.getElementById('inputType').value;
+            const location = document.getElementById('inputLocation').value.trim();
+            const coordsStr = document.getElementById('inputCoords').value.trim();
+            const message = document.getElementById('inputMessage').value.trim();
+            const directionStr = document.getElementById('inputDirection').value.trim();
+
+            if (!location || !coordsStr || !message) {
+                alert('Будь ласка, заповніть усі обов\'язкові поля.');
+                return;
+            }
+
+            const coords = coordsStr.split(',').map(c => parseFloat(c.trim()));
+            if (coords.length !== 2 || isNaN(coords[0]) || isNaN(coords[1])) {
+                alert('Невірний формат координат. Використовуйте: широта, довгота (наприклад: 50.000, 36.250)');
+                return;
+            }
+
+            let newAlert = {
+                type: type,
+                location: location.replace(/ /g, '_'),
+                coords: coords,
+                message: message,
+                timestamp: Date.now() 
+            };
+            
+            if (type === 'shahed' && directionStr) {
+                try {
+                    const parsedDirection = JSON.parse('[' + directionStr + ']');
+                    if (Array.isArray(parsedDirection) && parsedDirection.every(arr => Array.isArray(arr) && arr.length === 2)) {
+                        newAlert.direction_line = parsedDirection;
+                    } else {
+                        throw new Error('Invalid format');
+                    }
+                } catch (e) {
+                    alert('Помилка парсингу маршруту. Перевірте синтаксис: [lat1, lon1], [lat2, lon2]');
+                    return;
+                }
+            }
+            
+            activeAlerts.unshift(newAlert); 
+            
+            // Очистка формы
+            document.getElementById('inputMessage').value = '';
+            document.getElementById('inputDirection').value = '';
+
+            if (currentMarker) {
+                map.removeLayer(currentMarker);
+                currentMarker = null;
+            }
+
+            updateOutput();
+        }
+
+        function removeAlert(index) {
+            activeAlerts.splice(index, 1);
+            updateOutput();
+        }
+
+        function clearAlerts() {
+            if (confirm('Ви впевнені, що хочете видалити всі активні загрози?')) {
+                activeAlerts = [];
+                updateOutput();
+            }
+        }
+
+        function updateAdminList() {
+            const listDiv = document.getElementById('activeAlertsList');
+            if (activeAlerts.length === 0) {
+                listDiv.innerHTML = 'Поки що немає загроз.';
+                return;
+            }
+            
+            listDiv.innerHTML = activeAlerts.map((alert, index) => {
+                const time = new Date(alert.timestamp).toLocaleTimeString('uk-UA');
+                return `
+                    <div class="alert-item-line" style="border-left-color: ${getAlertColor(alert.type)};">
+                        <span style="font-weight: bold;">[${alert.type.toUpperCase()}]</span> 
+                        ${time} - ${alert.location.replace(/_/g, ' ')}
+                        <button onclick="removeAlert(${index})" style="color: ${getAlertColor(alert.type)};">✖</button>
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        // --- ФУНКЦИИ КОПИРОВАНИЯ/ЗАГРУЗКИ ---
+
+        function loadJson() {
+            const jsonText = document.getElementById('outputJson').value.trim();
+            document.getElementById('copySuccess').style.display = 'none';
+
+            if (!jsonText) {
+                alert('Будь ласка, вставте JSON-файл у текстове поле.');
+                return;
+            }
+            
+            try {
+                const data = JSON.parse(jsonText);
+                if (data.active_alerts && Array.isArray(data.active_alerts)) {
+                    activeAlerts = data.active_alerts;
+                    updateOutput();
+                    document.getElementById('copySuccess').textContent = `✅ Успішно завантажено ${activeAlerts.length} загроз.`;
+                    document.getElementById('copySuccess').className = 'status-message status-success';
+                    document.getElementById('copySuccess').style.display = 'block';
+                    setTimeout(() => document.getElementById('copySuccess').style.display = 'none', 3000);
+                } else {
+                    alert('❌ Помилка: Не вдалося знайти масив "active_alerts".');
+                }
+            } catch (e) {
+                alert('❌ Помилка парсингу JSON. Перевірте синтаксис (запятые, скобки).');
+                console.error('JSON Parsing Error:', e);
+            }
+        }
+
+        // --- ФУНКЦИЯ АВТОНОМНОГО СОХРАНЕНИЯ (Критично) ---
+        async function saveJsonRemotely() {
+            document.getElementById('copySuccess').style.display = 'none';
+            const successMsg = document.getElementById('copySuccess');
+            
+            const outputTextarea = document.getElementById('outputJson');
+            const jsonToSave = outputTextarea.value.trim();
+
+            let dataObject;
+            try {
+                dataObject = JSON.parse(jsonToSave);
+            } catch (e) {
+                successMsg.textContent = '❌ Помилка: JSON не валідний. Неможливо зберегти.';
+                successMsg.className = 'status-message status-error';
+                successMsg.style.display = 'block';
+                return;
+            }
+
+            try {
+                const response = await fetch(SERVER_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(dataObject) 
+                });
+
+                const result = await response.json();
+
+                if (response.ok && result.success) {
+                    successMsg.textContent = '✅ УСПІХ: Файл alerts.json автономно оновлено!';
+                    successMsg.className = 'status-message status-success';
+                    successMsg.style.display = 'block';
+                    setTimeout(() => successMsg.style.display = 'none', 3000);
+                } else {
+                    successMsg.textContent = `❌ ПОМИЛКА: Не вдалося зберегти. Перевірте консоль Node.js. (${result.message || response.statusText})`;
+                    successMsg.className = 'status-message status-error';
+                    successMsg.style.display = 'block';
+                }
+            } catch (error) {
+                successMsg.textContent = '❌ ПОМИЛКА МЕРЕЖІ: Сервер Node.js не відповідає. Запустіть його!';
+                successMsg.className = 'status-message status-error';
+                successMsg.style.display = 'block';
+                console.error('Network Error:', error);
+            }
+        }
+
+
+        // --- АВТОЗАПУСК ---
+        document.addEventListener('DOMContentLoaded', initMap);
+        document.addEventListener('DOMContentLoaded', updateOutput); 
+    </script>
+</body>
+</html>
